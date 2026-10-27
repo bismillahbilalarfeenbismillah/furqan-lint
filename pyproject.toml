@@ -107,6 +107,15 @@ gate11-rust = [
     "tree-sitter>=0.23,<1",
     "tree-sitter-rust>=0.23,<1",
 ]
+# Optional HABL integration (Phase 2 -- Hydroponic Grow Plan).
+# pip install furqan-lint[habl]. When installed and --habl is
+# passed, diagnostics are also emitted as HABL Finding envelopes
+# to .habl/findings.jsonl. This is the mycorrhizal tap root --
+# the point where furqan-lint's findings enter the shared
+# connective tissue of the Entourage Effect Safety Suite.
+habl = [
+    "habl>=0.1.0",
+]
 
 [project.scripts]
 furqan-lint = "furqan_lint.cli:main"
@@ -231,6 +240,14 @@ ignore_missing_imports = true
 # ImportError per Decision 6 (a). The score_validity checker
 # silent-passes when the extra is not installed.
 module = "onnx_tool"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# habl is an optional dependency installed via the [habl] extra
+# (Phase 2 -- Hydroponic Grow Plan). The import is guarded by
+# try/except ImportError in habl_emitter.py; the emitter
+# silent-passes when habl is not installed.
+module = "habl"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

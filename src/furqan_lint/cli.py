@@ -37,6 +37,17 @@ EXCLUDED_DIRS: frozenset[str] = frozenset(
     }
 )
 
+# ---------------------------------------------------------------------------
+# HABL integration state (Phase 2 -- Hydroponic Grow Plan)
+# ---------------------------------------------------------------------------
+# Set by main() when --habl is passed. Module-level so the check
+# functions can read it without signature changes to the existing
+# _check_file / _check_*_file call chain.
+_habl_config: dict[str, object] = {
+    "enabled": False,
+    "project_root": None,
+}
+
 # Single source of truth for which file extensions the directory
 # walker considers. Future adapters add their extension here, not
 # in scattered string literals. Round-24 finding C2 closure: prior
@@ -84,6 +95,12 @@ def main() -> int:  # noqa: PLR0915
         # verification on bundles in the path. The flag is
         # parsed out before resolving the path argument.
         gate11_enabled = False
+        # Phase 2 (Hydroponic Grow Plan): --habl flag enables HABL
+        # finding emission. When set, every diagnostic is also
+        # converted to a HABL Finding envelope and appended to
+        # .habl/findings.jsonl in the project root.
+        habl_enabled = False
+        habl_project_root: str | None = None
         # Phase G11.1 audit C-1 + H-5 + H-6 corrective: include
         # the new identity-policy and force-refresh keys so the
         # dir-walker through cmd_check_gate11 can route them
@@ -100,7 +117,19 @@ def main() -> int:  # noqa: PLR0915
         i = 1
         while i < len(args):
             a = args[i]
-            if a == "--gate11":
+            if a == "--habl":
+                habl_enabled = True
+                i += 1
+            elif a == "--habl-root":
+                if i + 1 >= len(args):
+                    print(
+                        "--habl-root requires a path argument",
+                        file=sys.stderr,
+                    )
+                    return 2
+                habl_project_root = args[i + 1]
+                i += 2
+            elif a == "--gate11":
                 gate11_enabled = True
                 i += 1
             elif a == "--trust-config":
@@ -146,6 +175,20 @@ def main() -> int:  # noqa: PLR0915
         if not target.exists():
             print(f"Not found: {target}", file=sys.stderr)
             return 1
+
+        # Wire HABL config into module-level state so check functions
+        # can emit findings without signature changes.
+        if habl_enabled:
+            _habl_config["enabled"] = True
+            # Default project root: the target directory itself (or
+            # its parent if it's a file). --habl-root overrides.
+            if habl_project_root is not None:
+                _habl_config["project_root"] = Path(habl_project_root)
+            elif target.is_dir():
+                _habl_config["project_root"] = target
+            else:
+                _habl_config["project_root"] = target.parent
+
         primary_exit = _check_file(target) if target.is_file() else _check_directory(target)
         if not gate11_enabled:
             return primary_exit
@@ -183,6 +226,8 @@ def _print_usage(file: TextIO | None = None) -> None:
     print("Usage:", file=out)
     print("  furqan-lint check <file.py>", file=out)
     print("  furqan-lint check <directory/>", file=out)
+    print("  furqan-lint check --habl <path>        (emit HABL findings)", file=out)
+    print("  furqan-lint check --habl --habl-root <dir> <path>", file=out)
     print("  furqan-lint check --gate11 <path>", file=out)
     print("  furqan-lint diff <old.py> <new.py>", file=out)
     print("  furqan-lint manifest init <module.py> [--trust-config PATH]", file=out)
@@ -269,6 +314,13 @@ def _check_python_file(path: Path) -> int:
             msg = getattr(a, "message", str(a))
             print(f"    [{name}] {msg}")
 
+    # HABL emission (Phase 2 -- the mycorrhizal tap root)
+    if _habl_config["enabled"] and diagnostics:
+        from furqan_lint.habl_emitter import emit_to_ledger
+        count = emit_to_ledger(diagnostics, str(path), _habl_config["project_root"])
+        if count:
+            print(f"  HABL: {count} finding(s) appended to ledger")
+
     return 1 if is_failure else 0
 
 
@@ -345,6 +397,13 @@ def _check_rust_file(path: Path) -> int:
             msg = getattr(a, "message", str(a))
             print(f"    [{name}] {msg}")
 
+    # HABL emission (Phase 2 -- the mycorrhizal tap root)
+    if _habl_config["enabled"] and diagnostics:
+        from furqan_lint.habl_emitter import emit_to_ledger
+        count = emit_to_ledger(diagnostics, str(path), _habl_config["project_root"])
+        if count:
+            print(f"  HABL: {count} finding(s) appended to ledger")
+
     return 1 if marads else 0
 
 
@@ -419,6 +478,13 @@ def _check_go_file(path: Path) -> int:
         for name, a in advisories:
             msg = getattr(a, "message", str(a))
             print(f"    [{name}] {msg}")
+
+    # HABL emission (Phase 2 -- the mycorrhizal tap root)
+    if _habl_config["enabled"] and diagnostics:
+        from furqan_lint.habl_emitter import emit_to_ledger
+        count = emit_to_ledger(diagnostics, str(path), _habl_config["project_root"])
+        if count:
+            print(f"  HABL: {count} finding(s) appended to ledger")
 
     return 1 if marads else 0
 
@@ -536,6 +602,13 @@ def _check_onnx_file(path: Path) -> int:
         fix = getattr(d, "minimal_fix", None)
         if fix:
             print(f"      fix: {fix}")
+
+    # HABL emission (Phase 2 -- the mycorrhizal tap root)
+    if _habl_config["enabled"] and diagnostics:
+        from furqan_lint.habl_emitter import emit_to_ledger
+        count = emit_to_ledger(diagnostics, str(path), _habl_config["project_root"])
+        if count:
+            print(f"  HABL: {count} finding(s) appended to ledger")
 
     # Decision 3: ADVISORY exits 0; MARAD exits 1.
     return 1 if marad else 0
