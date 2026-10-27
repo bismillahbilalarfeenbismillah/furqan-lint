@@ -241,9 +241,18 @@ def main() -> int:  # noqa: PLR0915
 
         primary_exit = _check_file(target) if target.is_file() else _check_directory(target)
         if _habl_config["failed"]:
+            # Two separate facts, stated separately: the lint verdict
+            # (unchanged, printed above on stdout) and the export failure.
+            lint_verdict = {0: "PASS or ADVISORY only (exit 0)", 1: "MARAD (exit 1)"}.get(
+                primary_exit, f"exit {primary_exit}"
+            )
+            print(
+                f"Lint verdict: {lint_verdict}. This is unaffected by the export failure.",
+                file=sys.stderr,
+            )
             print(
                 "HABL export incomplete: see 'HABL EXPORT FAILED' lines above. "
-                "Findings for those files were not written.",
+                "Findings for those files were not written. Exiting 3.",
                 file=sys.stderr,
             )
             primary_exit = EXIT_HABL_EXPORT_FAILED

@@ -254,6 +254,29 @@ def test_cli_unsupported_diagnostic_exits_3_and_writes_nothing(tmp_path, monkeyp
     assert not ledger_path(tmp_path).exists()
 
 
+def test_cli_marad_and_export_failure_are_reported_separately(tmp_path, monkeypatch, capsys):
+    """GPT-6 review: exit 3 may take precedence over MARAD only if the
+    MARAD findings stay visible and the two failures are distinguishable."""
+    shutil.copy(FAILING / "missing_return_path.py", tmp_path / "bad.py")
+    shutil.copy(CLEAN / "simple_function.py", tmp_path / "ok.py")
+
+    def boom(*_a, **_k):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(habl, "append_findings", boom)
+    code = _run_cli(["check", "--habl", str(tmp_path)], monkeypatch)
+    out = capsys.readouterr()
+    assert code == 3
+    # The structural finding is on stdout, exactly as without --habl.
+    assert "MARAD" in out.out and "all_paths_return" in out.out
+    assert "HABL" not in out.out.replace("HABL:", "")
+    # stderr names both facts on separate lines.
+    err_lines = out.err.splitlines()
+    assert any(line.startswith("Lint verdict: MARAD (exit 1)") for line in err_lines)
+    assert any(line.startswith("HABL EXPORT FAILED") and "read-only" in line for line in err_lines)
+    assert any(line.startswith("HABL export incomplete") for line in err_lines)
+
+
 def test_cli_append_failure_exits_3(tmp_path, monkeypatch, capsys):
     shutil.copy(FAILING / "missing_return_path.py", tmp_path / "bad.py")
 
