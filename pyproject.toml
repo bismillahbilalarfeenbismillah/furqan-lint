@@ -107,14 +107,14 @@ gate11-rust = [
     "tree-sitter>=0.23,<1",
     "tree-sitter-rust>=0.23,<1",
 ]
-# Optional HABL integration (Phase 2 -- Hydroponic Grow Plan).
-# pip install furqan-lint[habl]. When installed and --habl is
-# passed, diagnostics are also emitted as HABL Finding envelopes
-# to .habl/findings.jsonl. This is the mycorrhizal tap root --
-# the point where furqan-lint's findings enter the shared
-# connective tissue of the Entourage Effect Safety Suite.
+# Optional HABL integration.
+# pip install furqan-lint[habl]. When --habl is passed, diagnostics
+# are also emitted as HABL Finding envelopes to .habl/findings.jsonl.
+# If HABL is missing or incompatible, or an append fails, check
+# exits 3 instead of reporting success. Upper bound: HABL v0.2 is
+# expected to change the schema and must be adopted deliberately.
 habl = [
-    "habl>=0.1.0",
+    "habl>=0.1.1,<0.2",
 ]
 
 [project.scripts]
@@ -177,6 +177,10 @@ ignore = [
 # adapter + runner. The pattern is deliberate; pre-v0.5.0 it was
 # noted in the docstring.
 "src/furqan_lint/cli.py" = ["PLC0415"]
+# habl_emitter imports habl inside require_habl() so furqan-lint stays
+# importable without the [habl] extra, and so a missing or incompatible
+# habl surfaces as HablUnavailableError (check exits 3), not ImportError.
+"src/furqan_lint/habl_emitter.py" = ["PLC0415"]
 # rust_adapter __init__.py lazy-imports tree_sitter inside parse_file
 # so the broader furqan_lint package remains importable on installs
 # without the [rust] extra. Mirror the cli.py exception.
@@ -243,10 +247,10 @@ module = "onnx_tool"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# habl is an optional dependency installed via the [habl] extra
-# (Phase 2 -- Hydroponic Grow Plan). The import is guarded by
-# try/except ImportError in habl_emitter.py; the emitter
-# silent-passes when habl is not installed.
+# habl is an optional dependency installed via the [habl] extra.
+# The import is guarded in
+# habl_emitter.require_habl(), which raises HablUnavailableError
+# (check exits 3) when habl is missing or incompatible.
 module = "habl"
 ignore_missing_imports = true
 

@@ -19,6 +19,7 @@ Exit codes:
 from __future__ import annotations
 
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO
 
@@ -38,7 +39,7 @@ EXCLUDED_DIRS: frozenset[str] = frozenset(
 )
 
 # ---------------------------------------------------------------------------
-# HABL integration state (Phase 2 -- Hydroponic Grow Plan)
+# HABL integration state
 # ---------------------------------------------------------------------------
 # Set by main() when --habl is passed. Module-level so the check
 # functions can read it without signature changes to the existing
@@ -46,7 +47,46 @@ EXCLUDED_DIRS: frozenset[str] = frozenset(
 _habl_config: dict[str, object] = {
     "enabled": False,
     "project_root": None,
+    "failed": False,
 }
+
+# Exit code when --habl was requested and export did not complete
+# (HABL missing or incompatible, unsupported diagnostic, or a failed
+# append). It takes precedence over the lint verdict so that an
+# incomplete export is never reported as success.
+EXIT_HABL_EXPORT_FAILED = 3
+
+
+def _reset_habl_config() -> None:
+    _habl_config["enabled"] = False
+    _habl_config["project_root"] = None
+    _habl_config["failed"] = False
+
+
+def _emit_habl(diagnostics: Sequence[tuple[str, object]], path: Path) -> None:
+    """Append this file's diagnostics to the HABL ledger, if --habl.
+
+    A failure is reported on stderr and recorded; main() then exits
+    with EXIT_HABL_EXPORT_FAILED. Scanning of other files continues so
+    the lint report itself stays complete.
+    """
+    if not _habl_config["enabled"] or not diagnostics:
+        return
+    from furqan_lint.habl_emitter import HablExportError, emit_to_ledger
+
+    root = _habl_config["project_root"]
+    if not isinstance(root, Path):  # set by main() whenever enabled
+        _habl_config["failed"] = True
+        print(f"HABL EXPORT FAILED  {path}: no HABL project root configured", file=sys.stderr)
+        return
+    try:
+        count = emit_to_ledger(diagnostics, path, root)
+    except HablExportError as exc:
+        _habl_config["failed"] = True
+        print(f"HABL EXPORT FAILED  {path}: {exc}", file=sys.stderr)
+        return
+    print(f"  HABL: {count} finding(s) appended to ledger")
+
 
 # Single source of truth for which file extensions the directory
 # walker considers. Future adapters add their extension here, not
@@ -95,7 +135,7 @@ def main() -> int:  # noqa: PLR0915
         # verification on bundles in the path. The flag is
         # parsed out before resolving the path argument.
         gate11_enabled = False
-        # Phase 2 (Hydroponic Grow Plan): --habl flag enables HABL
+        # --habl flag enables HABL
         # finding emission. When set, every diagnostic is also
         # converted to a HABL Finding envelope and appended to
         # .habl/findings.jsonl in the project root.
@@ -177,8 +217,18 @@ def main() -> int:  # noqa: PLR0915
             return 1
 
         # Wire HABL config into module-level state so check functions
-        # can emit findings without signature changes.
+        # can emit findings without signature changes. Reset first so
+        # state from an earlier in-process call cannot leak in.
+        _reset_habl_config()
         if habl_enabled:
+            # Fail before scanning if export cannot work at all.
+            from furqan_lint.habl_emitter import HablUnavailableError, require_habl
+
+            try:
+                require_habl()
+            except HablUnavailableError as exc:
+                print(f"HABL EXPORT FAILED: {exc}", file=sys.stderr)
+                return EXIT_HABL_EXPORT_FAILED
             _habl_config["enabled"] = True
             # Default project root: the target directory itself (or
             # its parent if it's a file). --habl-root overrides.
@@ -190,6 +240,13 @@ def main() -> int:  # noqa: PLR0915
                 _habl_config["project_root"] = target.parent
 
         primary_exit = _check_file(target) if target.is_file() else _check_directory(target)
+        if _habl_config["failed"]:
+            print(
+                "HABL export incomplete: see 'HABL EXPORT FAILED' lines above. "
+                "Findings for those files were not written.",
+                file=sys.stderr,
+            )
+            primary_exit = EXIT_HABL_EXPORT_FAILED
         if not gate11_enabled:
             return primary_exit
         # When --gate11 is set, also run gate11 verification on
@@ -228,6 +285,7 @@ def _print_usage(file: TextIO | None = None) -> None:
     print("  furqan-lint check <directory/>", file=out)
     print("  furqan-lint check --habl <path>        (emit HABL findings)", file=out)
     print("  furqan-lint check --habl --habl-root <dir> <path>", file=out)
+    print("    (exit 3 if HABL export was requested but did not complete)", file=out)
     print("  furqan-lint check --gate11 <path>", file=out)
     print("  furqan-lint diff <old.py> <new.py>", file=out)
     print("  furqan-lint manifest init <module.py> [--trust-config PATH]", file=out)
@@ -314,12 +372,7 @@ def _check_python_file(path: Path) -> int:
             msg = getattr(a, "message", str(a))
             print(f"    [{name}] {msg}")
 
-    # HABL emission (Phase 2 -- the mycorrhizal tap root)
-    if _habl_config["enabled"] and diagnostics:
-        from furqan_lint.habl_emitter import emit_to_ledger
-        count = emit_to_ledger(diagnostics, str(path), _habl_config["project_root"])
-        if count:
-            print(f"  HABL: {count} finding(s) appended to ledger")
+    _emit_habl(diagnostics, path)
 
     return 1 if is_failure else 0
 
@@ -397,12 +450,7 @@ def _check_rust_file(path: Path) -> int:
             msg = getattr(a, "message", str(a))
             print(f"    [{name}] {msg}")
 
-    # HABL emission (Phase 2 -- the mycorrhizal tap root)
-    if _habl_config["enabled"] and diagnostics:
-        from furqan_lint.habl_emitter import emit_to_ledger
-        count = emit_to_ledger(diagnostics, str(path), _habl_config["project_root"])
-        if count:
-            print(f"  HABL: {count} finding(s) appended to ledger")
+    _emit_habl(diagnostics, path)
 
     return 1 if marads else 0
 
@@ -479,12 +527,7 @@ def _check_go_file(path: Path) -> int:
             msg = getattr(a, "message", str(a))
             print(f"    [{name}] {msg}")
 
-    # HABL emission (Phase 2 -- the mycorrhizal tap root)
-    if _habl_config["enabled"] and diagnostics:
-        from furqan_lint.habl_emitter import emit_to_ledger
-        count = emit_to_ledger(diagnostics, str(path), _habl_config["project_root"])
-        if count:
-            print(f"  HABL: {count} finding(s) appended to ledger")
+    _emit_habl(diagnostics, path)
 
     return 1 if marads else 0
 
@@ -583,7 +626,7 @@ def _check_onnx_file(path: Path) -> int:
 
     if marad and advisory:
         print(f"MARAD  {path}")
-        print(f"  5 structural checks ran, " f"{len(marad)} MARAD, {len(advisory)} ADVISORY:")
+        print(f"  5 structural checks ran, {len(marad)} MARAD, {len(advisory)} ADVISORY:")
     elif marad:
         print(f"MARAD  {path}")
         print(f"  {len(marad)} violation(s):")
@@ -603,12 +646,7 @@ def _check_onnx_file(path: Path) -> int:
         if fix:
             print(f"      fix: {fix}")
 
-    # HABL emission (Phase 2 -- the mycorrhizal tap root)
-    if _habl_config["enabled"] and diagnostics:
-        from furqan_lint.habl_emitter import emit_to_ledger
-        count = emit_to_ledger(diagnostics, str(path), _habl_config["project_root"])
-        if count:
-            print(f"  HABL: {count} finding(s) appended to ledger")
+    _emit_habl(diagnostics, path)
 
     # Decision 3: ADVISORY exits 0; MARAD exits 1.
     return 1 if marad else 0
